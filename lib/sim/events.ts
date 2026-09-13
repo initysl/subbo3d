@@ -19,7 +19,7 @@ export class SimEventBuffer {
     this.capacity = capacity;
     this.items = new Array(capacity);
     for (let i = 0; i < capacity; i++) {
-      this.items[i] = { kind: 0 as SimEventKind, a: -1, b: -1, impulse: 0, x: 0, y: 0, z: 0 };
+      this.items[i] = { kind: 0 as SimEventKind, a: -1, b: -1, impulse: 0, x: 0, y: 0, z: 0, meta: 0 };
     }
   }
 
@@ -36,6 +36,7 @@ export class SimEventBuffer {
     x: number,
     y: number,
     z: number,
+    meta = 0,
   ): void {
     if (this.count >= this.capacity) {
       this.overflow++;
@@ -49,6 +50,7 @@ export class SimEventBuffer {
     e.x = x;
     e.y = y;
     e.z = z;
+    e.meta = meta;
   }
 
   /** Read an event by index. The returned object is reused — do not retain it. */

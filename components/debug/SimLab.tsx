@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as C from "@/lib/sim/constants";
-import { setKickoffFormation } from "@/lib/sim/formation";
+import { Match } from "@/lib/match/Match";
+import { FISTF } from "@/lib/rules/presets";
+import { Phase } from "@/lib/rules/types";
 import { applyFlick, quantizeFlick } from "@/lib/sim/input";
 import { step } from "@/lib/sim/step";
 import {
@@ -31,8 +33,14 @@ const PREVIEW_STEPS = 300;
 const PREVIEW_SAMPLE = 4;
 
 interface Hud {
-  settled: boolean;
-  settleTime: number;
+  phase: Phase;
+  attacker: number;
+  flicksUsed: number;
+  blockOwed: boolean;
+  score0: number;
+  score1: number;
+  clock: string;
+  half: number;
   power: number;
   selected: number;
   /** Microseconds of solver time per simulated step. */
@@ -40,16 +48,41 @@ interface Hud {
   fps: number;
 }
 
+const PHASE_LABEL: Record<number, string> = {
+  [Phase.FlickOff]: "flick-off",
+  [Phase.AwaitAttackFlick]: "your flick",
+  [Phase.Resolving]: "running",
+  [Phase.BlockFlickOffered]: "BLOCK-FLICK",
+  [Phase.Restart]: "restart",
+  [Phase.GoalScored]: "GOAL!",
+  [Phase.HalfTime]: "half time",
+  [Phase.FullTime]: "full time",
+};
+
+function formatClock(steps: number): string {
+  const total = Math.floor(steps * C.DT);
+  const mm = Math.floor(total / 60);
+  const ss = total % 60;
+  return `${mm}:${ss < 10 ? "0" : ""}${ss}`;
+}
+
 export default function SimLab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hud, setHud] = useState<Hud>({
-    settled: true,
-    settleTime: 0,
+    phase: Phase.AwaitAttackFlick,
+    attacker: 0,
+    flicksUsed: 0,
+    blockOwed: false,
+    score0: 0,
+    score1: 0,
+    clock: "0:00",
+    half: 1,
     power: 0,
     selected: -1,
     simUs: 0,
     fps: 0,
   });
+  const skipRef = useRef<(() => void) | null>(null);
   const [resetKey, setResetKey] = useState(0);
 
   useEffect(() => {
@@ -67,9 +100,10 @@ export default function SimLab() {
     // Keeping it here rather than in refs means React's Strict Mode
     // double-mount tears down a complete engine and builds a fresh one, which
     // is exactly what we want to be robust against.
-    const world = createWorld();
-    setKickoffFormation(world);
+    const match = new Match(FISTF, 0);
+    const world = match.world;
     const scratch = createWorld();
+    skipRef.current = () => match.skipBlockFlick();
 
     const candidates = flickableBodies();
     const previewBall: number[] = [];
@@ -86,8 +120,6 @@ export default function SimLab() {
 
     let accumulator = 0;
     let lastFrame = performance.now();
-    let settleSteps = 0;
-    let running = false;
     // Browser timers are clamped well above the cost of a single step, so
     // per-frame measurement reads as zero. Accumulate over a window instead
     // and report per-step cost, which is the number that actually matters.
@@ -154,7 +186,9 @@ export default function SimLab() {
     function onPointerDown(e: PointerEvent) {
       const { x, y } = pointerToWorld(e);
       const body = pickBody(world, x, y, candidates);
-      if (body < 0) return;
+      // The rules decide what may be flicked: whose turn it is, and whether
+      // that figure has flicks left under FISTF 5.2.1.
+      if (body < 0 || !match.canFlick(body)) return;
 
       canvas.setPointerCapture(e.pointerId);
       drag.active = true;
@@ -181,9 +215,7 @@ export default function SimLab() {
       if (!drag.active) return;
       const aim = dragToAim(drag.curX - drag.startX, drag.curY - drag.startY);
       if (aim.valid) {
-        applyFlick(world, quantizeFlick(drag.body, aim.aimX, aim.aimY, aim.power, 0));
-        settleSteps = 0;
-        running = true;
+        match.flick(quantizeFlick(drag.body, aim.aimX, aim.aimY, aim.power, 0));
       }
       drag.active = false;
       drag.body = -1;
@@ -340,27 +372,20 @@ export default function SimLab() {
       lastFrame = now;
       fps = fps * 0.9 + (1 / Math.max(dt, 1e-6)) * 0.1;
 
-      if (running) {
-        accumulator += dt;
-        const simStart = performance.now();
-        let steps = 0;
-        while (accumulator >= C.DT && steps < 8) {
-          step(world);
-          settleSteps++;
-          accumulator -= C.DT;
-          steps++;
-          if (isSettled(world)) {
-            running = false;
-            accumulator = 0;
-            break;
-          }
-        }
-        if (steps >= 8) accumulator = 0;
-        simTimeAccum += performance.now() - simStart;
-        simStepsAccum += steps;
-      } else {
-        accumulator = 0;
+      // The match is stepped at the fixed rate whatever the phase: the clock is
+      // counted in simulation steps so that it stays deterministic, which means
+      // it only keeps real time if the steps keep coming.
+      accumulator += dt;
+      const simStart = performance.now();
+      let steps = 0;
+      while (accumulator >= C.DT && steps < 8) {
+        match.step();
+        accumulator -= C.DT;
+        steps++;
       }
+      if (steps >= 8) accumulator = 0;
+      simTimeAccum += performance.now() - simStart;
+      simStepsAccum += steps;
 
       drawPitch();
       drawPreview();
@@ -378,9 +403,16 @@ export default function SimLab() {
         const aim = drag.active
           ? dragToAim(drag.curX - drag.startX, drag.curY - drag.startY)
           : null;
+        const ms = match.state;
         setHud({
-          settled: !running,
-          settleTime: settleSteps * C.DT,
+          phase: ms.phase,
+          attacker: ms.attackerTeam,
+          flicksUsed: ms.flicksOnCurrentFigure,
+          blockOwed: ms.blockFlickOwed,
+          score0: ms.score0,
+          score1: ms.score1,
+          clock: formatClock(ms.clockSteps),
+          half: ms.half,
           power: aim?.valid ? aim.power : 0,
           selected: drag.body,
           simUs,
@@ -428,14 +460,50 @@ export default function SimLab() {
       />
 
       <p className="mt-3 text-sm text-neutral-400">
-        Press a figure, drag <em>away</em> from where you want it to go, release. The white line
-        is the ball&rsquo;s real predicted path, simulated forward with the same solver &mdash;
-        not an approximation.
+        Press a figure, drag <em>away</em> from where you want it to go, release. Only the team
+        in possession may flick, and no figure may play the ball more than three times running
+        (FISTF 5.2.1). After each touch the defender is owed a block-flick (6.2.1).
       </p>
 
+      <div className="mt-3 flex flex-wrap items-center gap-4">
+        <div className="font-mono text-2xl tabular-nums">
+          <span className="text-sky-400">{hud.score0}</span>
+          <span className="mx-2 text-neutral-600">–</span>
+          <span className="text-red-400">{hud.score1}</span>
+        </div>
+        <div className="font-mono text-sm text-neutral-400">
+          {hud.clock} · H{hud.half}
+        </div>
+        <div
+          className={`rounded px-2 py-0.5 font-mono text-xs ${
+            hud.phase === Phase.BlockFlickOffered
+              ? "bg-amber-500 text-black"
+              : hud.phase === Phase.GoalScored
+                ? "bg-emerald-500 text-black"
+                : "bg-neutral-800 text-neutral-300"
+          }`}
+        >
+          {PHASE_LABEL[hud.phase] ?? "?"}
+        </div>
+        <div className="font-mono text-xs">
+          <span className="text-neutral-500">to play </span>
+          <span className={hud.attacker === 0 ? "text-sky-400" : "text-red-400"}>
+            {hud.attacker === 0 ? "blue" : "red"}
+          </span>
+        </div>
+        {hud.phase === Phase.BlockFlickOffered && (
+          <button
+            onClick={() => skipRef.current?.()}
+            className="rounded bg-amber-600 px-3 py-1 text-xs font-medium hover:bg-amber-500"
+          >
+            Skip block-flick
+          </button>
+        )}
+      </div>
+
       <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs sm:grid-cols-3">
-        <Stat label="state" value={hud.settled ? "settled" : "running"} />
-        <Stat label="settle" value={`${hud.settleTime.toFixed(2)}s`} />
+        <Stat label="flicks on figure" value={`${hud.flicksUsed} / 3`} />
+        <Stat label="block owed" value={hud.blockOwed ? "yes" : "no"} />
         <Stat label="power" value={hud.power.toFixed(2)} />
         <Stat label="body" value={hud.selected < 0 ? "—" : String(hud.selected)} />
         <Stat label="sim/step" value={`${hud.simUs.toFixed(1)}\u00b5s`} />

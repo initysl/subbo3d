@@ -9,6 +9,7 @@ import {
   BALL,
   BODY_COUNT,
   BodyKind,
+  FLAG_ACTIVE,
   FLAG_OUT_OF_PLAY,
   OUTFIELD_PER_TEAM,
   TEAM_A_FIRST,
@@ -22,8 +23,9 @@ const POSTS: ReadonlyArray<readonly [number, number]> = [
   [C.HALF_LENGTH, C.GOAL_WIDTH / 2],
 ];
 
+/** Mirrors the solver's own `movable()`: active, and not out of play. */
 function inPlay(w: World, i: number): boolean {
-  return (w.flags[i] & FLAG_OUT_OF_PLAY) === 0;
+  return (w.flags[i] & FLAG_ACTIVE) !== 0 && (w.flags[i] & FLAG_OUT_OF_PLAY) === 0;
 }
 
 function blockHeight(kind: number): number {
@@ -77,9 +79,26 @@ function findNonFinite(w: World): string | null {
   return null;
 }
 
+/**
+ * Figures are contained by the pitch surround and must never leave it.
+ *
+ * The ball is different: FISTF 4.3.2 requires it to leave play once it has
+ * completely passed a line, so instead of confining it we assert the stronger
+ * property — the moment it is fully past a line it must be flagged out of
+ * play, never left loose in limbo.
+ */
 function findOutOfBounds(w: World): string | null {
   for (let i = 0; i < BODY_COUNT; i++) {
     if (!inPlay(w, i)) continue;
+
+    if (i === BALL) {
+      const r = w.radius[i];
+      if (Math.abs(w.px[i]) > C.HALF_LENGTH + r || Math.abs(w.py[i]) > C.HALF_WIDTH + r) {
+        return `ball fully past a line at step ${w.step} but not flagged out of play`;
+      }
+      continue;
+    }
+
     if (Math.abs(w.px[i]) > C.HALF_LENGTH + 1e-6) {
       return `body ${i} past the end line at step ${w.step}`;
     }

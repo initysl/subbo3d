@@ -6,6 +6,8 @@ import {
   KEEPER_A,
   KEEPER_B,
   OUTFIELD_PER_TEAM,
+  SPARE_KEEPER_A,
+  SPARE_KEEPER_B,
   TEAM_A_FIRST,
   TEAM_B_FIRST,
 } from "./types";
@@ -38,7 +40,8 @@ export function setKickoffFormation(w: World): void {
     w.pz[i] = 0;
     w.pendingLoft[i] = 0;
     w.sleepSteps[i] = 0;
-    w.flags[i] = FLAG_ACTIVE;
+    // The spare-goalkeepers stay out of play until Rule 9 is implemented.
+    w.flags[i] = i === SPARE_KEEPER_A || i === SPARE_KEEPER_B ? 0 : FLAG_ACTIVE;
   }
 
   for (let i = 0; i < OUTFIELD_PER_TEAM; i++) {
@@ -54,6 +57,13 @@ export function setKickoffFormation(w: World): void {
   w.py[KEEPER_A] = 0;
   w.px[KEEPER_B] = keeperX;
   w.py[KEEPER_B] = 0;
+
+  // Parked clear of the playing area and of each other; inactive, so never
+  // simulated, but kept apart so nothing reads them as a resting contact.
+  w.px[SPARE_KEEPER_A] = -C.HALF_LENGTH / 2;
+  w.py[SPARE_KEEPER_A] = C.HALF_WIDTH * 2;
+  w.px[SPARE_KEEPER_B] = C.HALF_LENGTH / 2;
+  w.py[SPARE_KEEPER_B] = C.HALF_WIDTH * 2;
 
   w.px[BALL] = 0;
   w.py[BALL] = 0;

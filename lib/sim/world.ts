@@ -9,6 +9,8 @@ import {
   KEEPER_A,
   KEEPER_B,
   OUTFIELD_PER_TEAM,
+  SPARE_KEEPER_A,
+  SPARE_KEEPER_B,
   TEAM_A,
   TEAM_A_FIRST,
   TEAM_B,
@@ -117,6 +119,19 @@ export function createWorld(): World {
     w.radius[k] = C.KEEPER_RADIUS;
     w.invMass[k] = 1 / C.KEEPER_MASS;
     w.flags[k] = FLAG_ACTIVE;
+  }
+
+  // Spare-goalkeepers (FISTF 4.2, Rule 9). Present in the body layout so their
+  // indices are fixed forever, but inactive until Rule 9 is implemented.
+  for (const [k, team] of [
+    [SPARE_KEEPER_A, TEAM_A],
+    [SPARE_KEEPER_B, TEAM_B],
+  ] as const) {
+    w.kind[k] = BodyKind.Keeper;
+    w.team[k] = team;
+    w.radius[k] = C.KEEPER_RADIUS;
+    w.invMass[k] = 1 / C.KEEPER_MASS;
+    w.flags[k] = 0;
   }
 
   return w;
