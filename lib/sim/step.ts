@@ -10,6 +10,8 @@ import {
   FLAG_ACTIVE,
   FLAG_ASLEEP,
   FLAG_OUT_OF_PLAY,
+  META_A_STATIONARY,
+  META_B_STATIONARY,
   SimEventKind,
 } from "./types";
 import type { World } from "./world";
@@ -117,7 +119,13 @@ function earliestImpact(w: World, tMax: number): boolean {
   }
 
   // Body against the pitch surround.
+  //
+  // The ball is deliberately excluded: FISTF 4.3.2 interrupts the game once
+  // the ball has completely passed a goal- or touchline, so it must be allowed
+  // to leave rather than bounce. Figures keep the surround so they cannot
+  // wander off the board.
   for (let i = 0; i < BODY_COUNT; i++) {
+    if (i === BALL) continue;
     if (!movable(w, i)) continue;
     if (w.flags[i] & FLAG_ASLEEP) continue;
     const r = w.radius[i];
@@ -131,13 +139,6 @@ function earliestImpact(w: World, tMax: number): boolean {
         const sign = s === 0 ? 1 : -1;
         const t = toiWall(p, v, limit * sign, r, sign, impT);
         if (t === NO_IMPACT || t >= impT) continue;
-
-        // The goal mouth is a hole in the end wall: a ball heading through it
-        // below the crossbar is not deflected, it scores.
-        if (axis === 0 && i === BALL) {
-          const yAt = w.py[BALL] + w.vy[BALL] * t;
-          if (Math.abs(yAt) < C.GOAL_WIDTH / 2 && w.pz[BALL] < C.GOAL_HEIGHT) continue;
-        }
 
         impT = t;
         impA = i;
@@ -190,7 +191,7 @@ function restitutionFor(ka: number, kb: number): number {
   return C.E_BASE_BASE;
 }
 
-function contactEvent(w: World, a: number, b: number, jn: number): void {
+function contactEvent(w: World, a: number, b: number, jn: number, meta: number): void {
   const ka = w.kind[a];
   const kb = w.kind[b];
   const ballSide = ka === BodyKind.Ball ? a : kb === BodyKind.Ball ? b : -1;
@@ -199,9 +200,22 @@ function contactEvent(w: World, a: number, b: number, jn: number): void {
     const other = ballSide === a ? b : a;
     const kind =
       w.kind[other] === BodyKind.Keeper ? SimEventKind.KeeperHitBall : SimEventKind.FigureHitBall;
-    w.events.emit(kind, other, ballSide, jn, w.px[ballSide], w.py[ballSide], w.pz[ballSide]);
+    // Re-express the stationary bits from the caller's (a, b) order into the
+    // event's (other, ball) order, so a reader never has to guess which is which.
+    const otherStationary =
+      other === a ? (meta & META_A_STATIONARY) !== 0 : (meta & META_B_STATIONARY) !== 0;
+    w.events.emit(
+      kind,
+      other,
+      ballSide,
+      jn,
+      w.px[ballSide],
+      w.py[ballSide],
+      w.pz[ballSide],
+      otherStationary ? META_A_STATIONARY : 0,
+    );
   } else {
-    w.events.emit(SimEventKind.FigureHitFigure, a, b, jn, w.px[a], w.py[a], 0);
+    w.events.emit(SimEventKind.FigureHitFigure, a, b, jn, w.px[a], w.py[a], 0, meta);
   }
 }
 
@@ -253,9 +267,14 @@ function resolveMotion(w: World, dt: number): void {
         ny = 0;
       }
 
+      // Sampled before resolveContact, which wakes both bodies.
+      const meta =
+        ((w.flags[a] & FLAG_ASLEEP) !== 0 ? META_A_STATIONARY : 0) |
+        ((w.flags[b] & FLAG_ASLEEP) !== 0 ? META_B_STATIONARY : 0);
+
       const jn = resolveContact(w, a, b, nx, ny, restitutionFor(w.kind[a], w.kind[b]));
       if (jn > 0) {
-        contactEvent(w, a, b, jn);
+        contactEvent(w, a, b, jn, meta);
         if (w.kind[a] === BodyKind.Ball) applyLoft(w, b, jn);
         else if (w.kind[b] === BodyKind.Ball) applyLoft(w, a, jn);
       }
@@ -290,21 +309,40 @@ function resolveMotion(w: World, dt: number): void {
   advanceAll(w, remaining);
 }
 
-/** Detect the ball leaving play through the goal mouth. */
+/**
+ * Detect the ball leaving the playing area.
+ *
+ * FISTF 4.3.2: the game is interrupted once the ball has *completely* passed a
+ * goal- or touchline — hence the ball's radius in the tests below. Which
+ * restart that becomes (flick-in, goal-flick or corner-flick) is a rules
+ * decision, so this only reports what happened and where.
+ */
 function checkBallOutOfPlay(w: World): void {
   if (w.flags[BALL] & FLAG_OUT_OF_PLAY) return;
-  if (Math.abs(w.px[BALL]) <= C.HALF_LENGTH) return;
 
-  const scored = Math.abs(w.py[BALL]) < C.GOAL_WIDTH / 2 && w.pz[BALL] < C.GOAL_HEIGHT;
-  w.events.emit(
-    scored ? SimEventKind.BallCrossedGoalLine : SimEventKind.BallLeftPitch,
-    BALL,
-    w.px[BALL] > 0 ? 1 : 0,
-    0,
-    w.px[BALL],
-    w.py[BALL],
-    w.pz[BALL],
-  );
+  const x = w.px[BALL];
+  const y = w.py[BALL];
+  const r = w.radius[BALL];
+
+  const pastGoalLine = Math.abs(x) > C.HALF_LENGTH + r;
+  const pastTouchline = Math.abs(y) > C.HALF_WIDTH + r;
+  if (!pastGoalLine && !pastTouchline) return;
+
+  let kind: SimEventKind;
+  if (pastGoalLine) {
+    // FISTF 7.1.1: between the posts and under the crossbar.
+    const betweenPosts = Math.abs(y) < C.GOAL_WIDTH / 2;
+    const underCrossbar = w.pz[BALL] < C.GOAL_HEIGHT;
+    kind =
+      betweenPosts && underCrossbar ? SimEventKind.BallEnteredGoal : SimEventKind.BallOutGoalLine;
+  } else {
+    kind = SimEventKind.BallOutTouchline;
+  }
+
+  // `b` carries which side of the pitch the ball left by, so the rules layer
+  // can tell whose goal-line or touchline it was without re-deriving it.
+  const side = pastGoalLine ? (x > 0 ? 1 : 0) : y > 0 ? 1 : 0;
+  w.events.emit(kind, BALL, side, 0, x, y, w.pz[BALL]);
 
   w.flags[BALL] |= FLAG_OUT_OF_PLAY | FLAG_ASLEEP;
   w.vx[BALL] = 0;

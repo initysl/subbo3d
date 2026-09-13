@@ -10,33 +10,59 @@
  * Equipment Regulations Handbook PDF.
  */
 
-/** Goal-to-goal axis. VERIFY: pitches vary between 1200 and 1210 mm. */
+/**
+ * Goal-to-goal axis. FISTF 1.2.1 permits 90-140 cm; the width must always be
+ * at least 30 cm smaller than the length.
+ */
 export const PITCH_LENGTH = 1.2;
-/** Touchline-to-touchline axis. VERIFY: 770-800 mm depending on pitch. */
+/** Touchline-to-touchline axis. FISTF 1.2.1 permits 60-100 cm. */
 export const PITCH_WIDTH = 0.77;
 
 export const HALF_LENGTH = PITCH_LENGTH / 2;
 export const HALF_WIDTH = PITCH_WIDTH / 2;
 
 /**
- * The shooting line sits parallel to, and equidistant between, the goal line
- * and the halfway line — so at a quarter of the pitch length from centre.
+ * FISTF 1.2.2: "Each half shall be divided into two equal zones by a
+ * shooting-line, parallel to the goal-lines. The zone between the
+ * shooting-line and the goal-line shall be called the shooting-area."
+ *
+ * So the line sits a quarter of the pitch length out from the centre.
  */
 export const SHOOTING_LINE_X = PITCH_LENGTH / 4;
 
-/** VERIFY against the equipment handbook. */
-export const GOAL_WIDTH = 0.15;
-export const GOAL_HEIGHT = 0.05;
-export const POST_RADIUS = 0.003;
+/** FISTF 2.3: the posts are 12.5 cm apart and 6 cm long. */
+export const GOAL_WIDTH = 0.125;
+export const GOAL_HEIGHT = 0.06;
+/** FISTF 2.3: posts and bars are no thicker than 5 mm. */
+export const POST_RADIUS = 0.0025;
 
-/** Only 22 mm balls are legal for official play. */
+/**
+ * FISTF 1.2.3: the penalty-area lines are 12-18 cm long and 30-48 cm apart,
+ * with the penalty-spot 8-14 cm from the goal-line.
+ *
+ * Unused until penalty-flicks (Rule 12) are implemented, but recorded here so
+ * the geometry lives in one place.
+ */
+export const PENALTY_AREA_DEPTH = 0.15;
+export const PENALTY_AREA_WIDTH = 0.4;
+export const PENALTY_SPOT_X = 0.11;
+
+/** FISTF 1.2.4: the goal-area lines are 5-7 cm long and 22-26 cm apart. */
+export const GOAL_AREA_DEPTH = 0.06;
+export const GOAL_AREA_WIDTH = 0.24;
+
+/** FISTF 1.2.5: a quarter circle of radius 2-3 cm in each corner. */
+export const CORNER_ARC_RADIUS = 0.025;
+
+/** FISTF 1.2.1: the centre-circle radius is 6-12 cm. */
+export const CENTRE_CIRCLE_RADIUS = 0.09;
+
+/** FISTF 3.1: the ball is 2.2 cm in diameter and 1.5 g in weight. */
 export const BALL_RADIUS = 0.011;
-/** Tournament balls weigh about 1.5 g. */
 export const BALL_MASS = 0.0015;
 
-/** Regulation base diameter is 16-21 mm; 20 mm sits in the usual range. */
+/** FISTF 4.1.1: the base is 1.6-2.1 cm in diameter and 0.5-0.7 cm high. */
 export const BASE_RADIUS = 0.01;
-/** Regulation base height is 5-7 mm. */
 export const BASE_HEIGHT = 0.006;
 /**
  * Base mass is not regulated the way the ball is. It is chosen purely for the

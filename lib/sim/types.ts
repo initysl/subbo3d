@@ -25,7 +25,18 @@ export const TEAM_A_FIRST = 1;
 export const TEAM_B_FIRST = TEAM_A_FIRST + OUTFIELD_PER_TEAM;
 export const KEEPER_A = TEAM_B_FIRST + OUTFIELD_PER_TEAM;
 export const KEEPER_B = KEEPER_A + 1;
-export const BODY_COUNT = KEEPER_B + 1;
+/**
+ * FISTF 4.2: each player uses ten field figures, one goalkeeper *and one
+ * spare-goalkeeper*.
+ *
+ * The spare-goalkeeper is not playable until Rule 9 is implemented, so these
+ * bodies start inactive. Their indices are reserved now because body indices
+ * are part of the wire format — renumbering them later would silently
+ * invalidate every recorded match and desync any online game.
+ */
+export const SPARE_KEEPER_A = KEEPER_B + 1;
+export const SPARE_KEEPER_B = SPARE_KEEPER_A + 1;
+export const BODY_COUNT = SPARE_KEEPER_B + 1;
 
 /** Kinds of contact the solver can report. */
 export const enum ContactKind {
@@ -41,10 +52,19 @@ export const enum SimEventKind {
   BallHitWall = 2,
   BallHitPost = 3,
   BallBounce = 4,
-  BallCrossedGoalLine = 5,
-  BallLeftPitch = 6,
-  KeeperHitBall = 7,
+  /** Between the posts and under the crossbar — a goal, subject to Rule 7. */
+  BallEnteredGoal = 5,
+  /** Across a goal-line but not into the goal (FISTF 15/16). */
+  BallOutGoalLine = 6,
+  /** Across a touchline (FISTF 14). */
+  BallOutTouchline = 7,
+  KeeperHitBall = 8,
 }
+
+/** `meta` bit: body `a` was at rest when the contact happened. */
+export const META_A_STATIONARY = 1 << 0;
+/** `meta` bit: body `b` was at rest when the contact happened. */
+export const META_B_STATIONARY = 1 << 1;
 
 export interface SimEvent {
   kind: SimEventKind;
@@ -58,4 +78,10 @@ export interface SimEvent {
   x: number;
   y: number;
   z: number;
+  /**
+   * Bitfield of META_* flags. FISTF 5.1.2b turns on whether the defending
+   * figure the ball struck was stationary, so the solver has to record it at
+   * the moment of contact — by the time the rules run, velocities have moved on.
+   */
+  meta: number;
 }
