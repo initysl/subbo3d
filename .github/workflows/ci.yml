@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run redundant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # Next 16 requires Node 20.9+; 22 is what the project is developed against.
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        # Also enforces the determinism boundary: lib/sim may not use
+        # implementation-approximated Math, the DOM, or wall-clock time.
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        # Includes the golden state hashes. If these fail, the simulation's
+        # numerical behaviour has changed — which breaks replays and future
+        # online lockstep. Do not regenerate them to make this green; work out
+        # what moved them first.
+        run: npm test
