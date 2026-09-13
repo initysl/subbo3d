@@ -52,8 +52,8 @@ export const GRAVITY = 9.81;
  * A disc on felt slows linearly and stops in finite time; exponential decay
  * asymptotes and feels floaty.
  */
-export const MU_BASE = 0.35;
-export const MU_BALL = 0.1;
+export const MU_BASE = 0.32;
+export const MU_BALL = 0.22;
 
 /**
  * A small viscous term layered on top of Coulomb friction. Not physical: it
@@ -61,7 +61,7 @@ export const MU_BALL = 0.1;
  * flick does not sail off the pitch. Start near zero and raise only if needed.
  */
 export const K_VISC_BASE = 0.9;
-export const K_VISC_BALL = 0.3;
+export const K_VISC_BALL = 1.6;
 
 export const E_BASE_BASE = 0.3;
 export const E_BASE_BALL = 0.55;
@@ -120,7 +120,7 @@ export const KEEPER_MASS = 0.018;
 export const CHIP_GAIN = 2.2;
 
 /** Fastest legal flick, in metres per second. */
-export const MAX_FLICK_SPEED = 2.4;
+export const MAX_FLICK_SPEED = 2.6;
 
 /** Quantisation scale for flick input — see lib/sim/input.ts. */
 export const IMPULSE_QUANTISE = 10000;

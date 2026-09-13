@@ -34,7 +34,7 @@ const CHECKPOINTS = [0, 5, 11, GOLDEN_FLICKS - 1];
  * to make the suite green — work out which change moved them, satisfy yourself
  * it was intended, and then update them in a commit that says so.
  */
-const GOLDEN_HASHES = [0x9f8dff94, 0xd5891e8c, 0xf46bc597, 0xabd536e3];
+const GOLDEN_HASHES = [0x1fa22516, 0xb5c0ef07, 0x6e3aac98, 0xc9475277];
 
 describe("determinism", () => {
   it("produces identical hashes for two runs of the same input log", () => {
