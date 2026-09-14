@@ -34,6 +34,17 @@ export const enum RestartKind {
 
 export const NO_TEAM = 255;
 
+/**
+ * How the goalkeeper is placed (FISTF Rule 8).
+ *
+ * "auto" positions the defending keeper as each attacking flick is committed
+ * and holds it there for the resolve — the placement 8.1.2 allows. "manual"
+ * hands the same placement to the defending player during the block-flick
+ * window. "off" leaves the keeper standing on its spot, which is mainly of
+ * use to tests that want the keeper out of the way.
+ */
+export type KeeperMode = "auto" | "manual" | "off";
+
 export interface MatchState {
   phase: Phase;
   /** The player in possession of the ball (FISTF 5.1.1). */
@@ -61,6 +72,15 @@ export interface MatchState {
   lastTouchTeam: number;
   /** Whether that last touch was a defender's, for FISTF 16.1.1. */
   lastDeflectorWasDefender: boolean;
+
+  /**
+   * Whether the most recent touch was by the defending goalkeeper.
+   *
+   * FISTF 8.1.4 remark 2: the block-flick a keeper's touch earns is withdrawn
+   * again if the ball then strikes an attacking figure, so the machine has to
+   * remember what touched it last.
+   */
+  lastTouchWasDefenderKeeper: boolean;
 
   score0: number;
   score1: number;
@@ -107,4 +127,6 @@ export interface RulesetConfig {
   halves: number;
   /** Steps the goal celebration holds before the restart. */
   goalCelebrationSteps: number;
+  /** FISTF 8. */
+  keeperMode: KeeperMode;
 }

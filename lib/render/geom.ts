@@ -89,8 +89,10 @@ export function createGoalGeometry(): THREE.BufferGeometry {
  * A coarse net, drawn as line segments across the back of the goal.
  * Cheap, and it stops the goal reading as an empty wireframe box.
  */
+export const NET_DEPTH = 0.07;
+
 export function createNetGeometry(): THREE.BufferGeometry {
-  const depth = 0.07;
+  const depth = NET_DEPTH;
   const halfMouth = C.GOAL_WIDTH / 2;
   const pts: number[] = [];
   const cols = 7;

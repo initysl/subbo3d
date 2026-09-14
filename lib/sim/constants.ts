@@ -140,7 +140,10 @@ export const SETTLE_TIMEOUT_STEPS = 1200;
 export const FIGURE_BLOCK_HEIGHT = 0.03;
 export const KEEPER_BLOCK_HEIGHT = 0.045;
 export const KEEPER_RADIUS = 0.0125;
-export const KEEPER_MASS = 0.018;
+/**
+ * The keeper has no mass constant: FISTF 8.1.1 holds it on a rod, so it is
+ * immovable by contact rather than a free body. See `createWorld`.
+ */
 
 /** Vertical velocity imparted to the ball per unit of loft and impulse. */
 export const CHIP_GAIN = 2.2;

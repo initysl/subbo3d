@@ -110,6 +110,14 @@ export function createWorld(): World {
     }
   }
 
+  // The goalkeeper is immovable by contact, like a wall or a post.
+  //
+  // FISTF 8.1.1 has it on a rod held from behind the goal, so it is braced by
+  // its player's hand rather than free to be shoved: a shot rebounds off it
+  // instead of pushing it back. Modelling it as a free disc had two bad
+  // consequences — a hard enough shot could barge the keeper over its own
+  // goal-line with the ball, and a glancing one could leave it parked outside
+  // the goal-area, which 8.2.1 does not allow at all.
   for (const [k, team] of [
     [KEEPER_A, TEAM_A],
     [KEEPER_B, TEAM_B],
@@ -117,7 +125,7 @@ export function createWorld(): World {
     w.kind[k] = BodyKind.Keeper;
     w.team[k] = team;
     w.radius[k] = C.KEEPER_RADIUS;
-    w.invMass[k] = 1 / C.KEEPER_MASS;
+    w.invMass[k] = 0;
     w.flags[k] = FLAG_ACTIVE;
   }
 
@@ -130,7 +138,7 @@ export function createWorld(): World {
     w.kind[k] = BodyKind.Keeper;
     w.team[k] = team;
     w.radius[k] = C.KEEPER_RADIUS;
-    w.invMass[k] = 1 / C.KEEPER_MASS;
+    w.invMass[k] = 0;
     w.flags[k] = 0;
   }
 

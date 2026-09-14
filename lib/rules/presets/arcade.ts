@@ -21,4 +21,5 @@ export const ARCADE: RulesetConfig = {
   halfLengthSteps: Math.round(5 * MINUTES),
   halves: 2,
   goalCelebrationSteps: Math.round(1.5 / DT),
+  keeperMode: "auto",
 };

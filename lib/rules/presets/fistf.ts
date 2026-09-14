@@ -21,4 +21,5 @@ export const FISTF: RulesetConfig = {
   halfLengthSteps: Math.round(15 * MINUTES),
   halves: 2,
   goalCelebrationSteps: Math.round(2 / DT),
+  keeperMode: "auto",
 };

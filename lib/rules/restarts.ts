@@ -64,6 +64,7 @@ export function applyRestart(m: MatchState, w: World): void {
   m.touchedBallThisFlick = false;
   m.possessionLost = false;
   m.blockFlickOwed = false;
+  m.lastTouchWasDefenderKeeper = false;
   m.restartKind = RestartKind.None;
   m.phase = Phase.AwaitAttackFlick;
 }

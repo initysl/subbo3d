@@ -34,6 +34,34 @@ export function ballInFrontOf(match: Match, body: number, dir: number): void {
   place(match, BALL, w.px[body] + dir * (C.BASE_RADIUS + C.BALL_RADIUS + 0.02), w.py[body]);
 }
 
+/**
+ * Line `body` up behind the ball and flick it at (tx, ty).
+ *
+ * A flick is aimed at the *figure*, not the ball, so a shot at a target means
+ * approaching the ball from the opposite side: the ball leaves along the
+ * contact normal. Setting shots up this way is the difference between a test
+ * that shoots at goal and one that only looks as though it does.
+ */
+export function shootAt(
+  match: Match,
+  body: number,
+  bx: number,
+  by: number,
+  tx: number,
+  ty: number,
+  power: number,
+): boolean {
+  place(match, BALL, bx, by);
+  const dx = tx - bx;
+  const dy = ty - by;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len;
+  const uy = dy / len;
+  const gap = C.BASE_RADIUS + C.BALL_RADIUS + 0.006;
+  place(match, body, bx - ux * gap, by - uy * gap);
+  return match.flick(flickAt(body, ux, uy, power));
+}
+
 export function flickAt(body: number, dirX: number, dirY: number, power: number): FlickCommand {
   return quantizeFlick(body, dirX, dirY, power, 0);
 }

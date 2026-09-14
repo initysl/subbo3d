@@ -37,6 +37,7 @@ export function hashMatch(match: Match): number {
   h = hashInt(h, m.ballWasShootableAtShot ? 1 : 0);
   h = hashInt(h, m.lastTouchTeam);
   h = hashInt(h, m.lastDeflectorWasDefender ? 1 : 0);
+  h = hashInt(h, m.lastTouchWasDefenderKeeper ? 1 : 0);
   h = hashInt(h, m.score0);
   h = hashInt(h, m.score1);
   h = hashInt(h, m.clockSteps);
@@ -100,6 +101,7 @@ const BOOLEAN_FIELDS = [
   "blockFlickOwed",
   "ballWasShootableAtShot",
   "lastDeflectorWasDefender",
+  "lastTouchWasDefenderKeeper",
 ] as const satisfies readonly BooleanKeys[];
 
 /**

@@ -2,8 +2,16 @@ import { applyFlick, type FlickCommand } from "@/lib/sim/input";
 import { BodyKind, FLAG_ACTIVE, META_A_STATIONARY, SimEventKind } from "@/lib/sim/types";
 import type { World } from "@/lib/sim/world";
 import { ballFullyInShootingArea } from "./geometry";
+import { autoPositionKeeper, makeKeeperPos, positionKeeper } from "./keeper";
 import { applyRestart } from "./restarts";
 import { NO_TEAM, Phase, RestartKind, type MatchState, type RulesetConfig } from "./types";
+
+/**
+ * Scratch for keeper placement. Module-level because `commitAttackFlick` runs
+ * many thousands of times a second inside the AI's search, and the rules layer
+ * allocates nothing once a match is under way.
+ */
+const keeperScratch = makeKeeperPos();
 
 /** What the ball did to end the current resolve, decided at settle time. */
 const enum Pending {
@@ -25,6 +33,7 @@ export function createMatchState(): MatchState {
     ballWasShootableAtShot: false,
     lastTouchTeam: NO_TEAM,
     lastDeflectorWasDefender: false,
+    lastTouchWasDefenderKeeper: false,
     score0: 0,
     score1: 0,
     clockSteps: 0,
@@ -100,10 +109,37 @@ export function commitAttackFlick(
   m.touchedBallThisFlick = false;
   m.possessionLost = false;
   m.blockFlickOwed = false;
+  m.lastTouchWasDefenderKeeper = false;
   m.pending = Pending.None;
   m.phase = Phase.Resolving;
 
+  // FISTF 8.1.2 — the keeper may be placed, but not worked to and fro once
+  // the flick is under way. So the defending keeper takes up its position at
+  // the moment of the flick and holds it for the whole resolve.
+  if (cfg.keeperMode === "auto") autoPositionKeeper(w, 1 - m.attackerTeam, keeperScratch);
+
   applyFlick(w, cmd);
+  return true;
+}
+
+/**
+ * Place the defending keeper by hand (FISTF 8.2.1), for `keeperMode: manual`.
+ *
+ * Offered in the block-flick window, which is the defender's existing turn to
+ * act — no new phase, and nothing that lets the keeper be fiddled with while
+ * the ball is moving. Returns false if the placement was not allowed.
+ */
+export function placeKeeper(
+  m: MatchState,
+  w: World,
+  x: number,
+  y: number,
+  cfg: RulesetConfig,
+): boolean {
+  if (cfg.keeperMode !== "manual") return false;
+  if (m.phase !== Phase.BlockFlickOffered && m.phase !== Phase.AwaitAttackFlick) return false;
+
+  positionKeeper(w, 1 - m.attackerTeam, x, y, keeperScratch);
   return true;
 }
 
@@ -146,26 +182,43 @@ export function observeStep(m: MatchState, w: World, cfg: RulesetConfig): void {
       case SimEventKind.KeeperHitBall: {
         const toucher = e.a;
         const team = w.team[toucher];
+        const isKeeper = e.kind === SimEventKind.KeeperHitBall;
+        const afterKeeperSave = m.lastTouchWasDefenderKeeper;
+
         m.lastTouchTeam = team;
         m.lastDeflectorWasDefender = team !== m.attackerTeam;
+        m.lastTouchWasDefenderKeeper = isKeeper && team !== m.attackerTeam;
 
         if (team === m.attackerTeam) {
           if (toucher === m.lastFlickedBody) {
             m.touchedBallThisFlick = true;
             // FISTF 6.2.1 — each attacking touch earns the defender a block-flick.
             if (cfg.blockFlickEnabled) m.blockFlickOwed = true;
+          } else if (isKeeper) {
+            // FISTF 8.1.3 — a keeper's touch is playing the ball like any
+            // other, so the attacker's own keeper both renews the allowance
+            // and earns the defender a block-flick under 8.1.4.
+            m.flicksOnCurrentFigure = 0;
+            if (cfg.blockFlickEnabled) m.blockFlickOwed = true;
           } else {
             // FISTF 5.2.1b — the ball touching another attacking figure
             // renews the flicked figure's allowance.
             m.flicksOnCurrentFigure = 0;
+            // FISTF 8.1.4 remark 2 — a block-flick earned by the defender's
+            // own keeper is withdrawn if the ball then strikes an attacking
+            // figure. The defender has had their deflection; play goes on.
+            if (afterKeeperSave) m.blockFlickOwed = false;
           }
-        } else if (
-          e.kind === SimEventKind.KeeperHitBall ||
-          (e.meta & META_A_STATIONARY) !== 0
-        ) {
+        } else if (isKeeper || (e.meta & META_A_STATIONARY) !== 0) {
           // FISTF 5.1.2b — only a *stationary* defending figure, or the
           // defender's goalkeeper, takes possession. A moving one does not.
           m.possessionLost = true;
+
+          // FISTF 8.1.4 — every touch by the goalkeeper, "even when the
+          // goalkeeper simply deflects a shot", allows the defender a
+          // block-flick. Saving and then clearing is one of the sequences the
+          // game would otherwise be missing entirely.
+          if (isKeeper && cfg.blockFlickEnabled) m.blockFlickOwed = true;
         }
         break;
       }
@@ -213,6 +266,7 @@ function resolvePossession(m: MatchState): void {
   }
   m.touchedBallThisFlick = false;
   m.possessionLost = false;
+  m.lastTouchWasDefenderKeeper = false;
   m.phase = Phase.AwaitAttackFlick;
 }
 
@@ -240,8 +294,18 @@ export function onSettled(m: MatchState, w: World, cfg: RulesetConfig): void {
 
     case Pending.OutGoalLine: {
       const defendingTeam = m.pendingSide === 1 ? 1 : 0;
-      // FISTF 16.1.1 — last deflected by a defender means a corner.
-      if (cfg.cornerFlicksEnabled && m.lastDeflectorWasDefender) {
+
+      // FISTF 16.1.1.1 — a deflection off a defending figure or the defending
+      // goalkeeper forces a corner, but only for a ball played from inside the
+      // shooting-area. FISTF 8.1.3 is the same rule read from the other end: a
+      // keeper deflecting an *irregular* shot behind gives a goal-flick to its
+      // own player, not a corner to the attacker.
+      //
+      // 16.1.1.1 also requires an outfield deflector to have been completely
+      // inside the shooting-area. Where the deflector stood is not recorded
+      // yet, so that half of the condition is still missing.
+      const regularShot = !cfg.shootingAreaRequired || m.ballWasShootableAtShot;
+      if (cfg.cornerFlicksEnabled && m.lastDeflectorWasDefender && regularShot) {
         award(m, RestartKind.CornerFlick, 1 - defendingTeam);
       } else {
         award(m, RestartKind.GoalFlick, defendingTeam);

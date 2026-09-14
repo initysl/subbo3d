@@ -9,6 +9,7 @@ import {
   createMatchState,
   observeStep,
   onSettled,
+  placeKeeper,
   skipBlockFlick,
   startMatch,
 } from "@/lib/rules/machine";
@@ -119,6 +120,17 @@ export class Match {
       return commitBlockFlick(this.state, this.world, cmd, this.cfg);
     }
     return commitAttackFlick(this.state, this.world, cmd, this.cfg);
+  }
+
+  /**
+   * Place the defending goalkeeper (FISTF 8.2.1), for rulesets that hand the
+   * keeper to its player rather than positioning it automatically.
+   *
+   * The position is clamped into the goal-area, so an illegal placement is not
+   * refused — it is simply brought back to the nearest legal spot.
+   */
+  placeKeeper(x: number, y: number): boolean {
+    return placeKeeper(this.state, this.world, x, y, this.cfg);
   }
 
   /** Decline the owed block-flick (FISTF 6.2.3 — it lapses after five seconds). */

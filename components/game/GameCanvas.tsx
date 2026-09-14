@@ -84,6 +84,17 @@ export default function GameCanvas({ onState, onReady, aiTeam, difficulty }: Gam
 
     onReadyRef.current(() => match.skipBlockFlick());
 
+    // A handle for driving the game from a browser harness: setting up a
+    // position, taking a screenshot, reproducing a rules bug by hand. Browser
+    // checks are otherwise limited to whatever can be expressed as pointer
+    // drags, which is a poor way to arrange a specific situation.
+    //
+    // Development only — `process.env.NODE_ENV` is inlined at build time, so
+    // this block is not in the production bundle at all.
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as { subbo3d?: unknown }).subbo3d = { match, scene };
+    }
+
     const drag = { active: false, body: -1, startX: 0, startY: 0, curX: 0, curY: 0 };
 
     // Browsers refuse to start an AudioContext outside a user gesture, so it

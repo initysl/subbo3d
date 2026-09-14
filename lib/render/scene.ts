@@ -6,7 +6,13 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import * as C from "@/lib/sim/constants";
 import { BALL, BODY_COUNT, BodyKind, FLAG_ACTIVE, FLAG_OUT_OF_PLAY, TEAM_A } from "@/lib/sim/types";
 import type { World } from "@/lib/sim/world";
-import { createBallGeometry, createFigureGeometry, createGoalGeometry, createNetGeometry } from "./geom";
+import {
+  createBallGeometry,
+  createFigureGeometry,
+  createGoalGeometry,
+  createNetGeometry,
+  NET_DEPTH,
+} from "./geom";
 import { createBlobTexture, createEnvironment, createPitchTextures } from "./tex";
 import { TiltShiftShader } from "./passes/tiltShift";
 import { Shake, Trail, Wobble } from "./fx";
@@ -91,7 +97,10 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
     // tilted away from the camera, so its across-pitch extent is foreshortened
     // on screen — ignoring that pulls the camera much further back than the
     // shot actually needs and leaves the pitch marooned in empty space.
-    const needH = (C.PITCH_LENGTH / 2) * 1.06;
+    // The goals stand *behind* the goal-lines, so the shot has to hold the
+    // pitch plus a net's depth at each end. Framing to the pitch alone cropped
+    // both goals off the sides of the screen.
+    const needH = (C.HALF_LENGTH + NET_DEPTH) * 1.04;
     const needV = (C.PITCH_WIDTH / 2) * Math.cos(TILT) * 1.35;
     const dist = Math.max(needH / Math.tan(hFov / 2), needV / Math.tan(vFov / 2));
     camera.position.set(0, dist * Math.sin(TILT), dist * Math.cos(TILT));
