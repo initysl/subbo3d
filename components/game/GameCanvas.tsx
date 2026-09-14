@@ -7,10 +7,12 @@ import { FISTF } from "@/lib/rules/presets";
 import type { MatchState } from "@/lib/rules/types";
 import { applyFlick, quantizeFlick } from "@/lib/sim/input";
 import { step } from "@/lib/sim/step";
-import { BALL } from "@/lib/sim/types";
+import { BALL, SimEventKind } from "@/lib/sim/types";
 import { copyWorld, createWorld, isSettled } from "@/lib/sim/world";
 import { dragToAim, flickableBodies, pickBody } from "@/lib/input/flick";
 import { createScene, type Scene3D } from "@/lib/render/scene";
+import { createAudioEngine, type AudioEngine } from "@/lib/audio/engine";
+import { playSimEvents } from "@/lib/audio/director";
 
 /**
  * The only module that pulls in three.js.
@@ -48,9 +50,15 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
     if (!canvasOrNull) return;
     const canvas: HTMLCanvasElement = canvasOrNull;
 
+    // Respect the accessibility preference: shake and haptics are exactly the
+    // kind of thing it exists for.
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
     let scene: Scene3D;
     try {
-      scene = createScene(canvas);
+      scene = createScene(canvas, { reducedMotion: reduceMotion });
     } catch (err) {
       console.error("Failed to create the 3D scene", err);
       return;
@@ -66,6 +74,16 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
     onReadyRef.current(() => match.skipBlockFlick());
 
     const drag = { active: false, body: -1, startX: 0, startY: 0, curX: 0, curY: 0 };
+
+    // Browsers refuse to start an AudioContext outside a user gesture, so it
+    // is created on the first press rather than at mount.
+    let audio: AudioEngine | null = null;
+
+    function buzz(ms: number): void {
+      if (reduceMotion) return;
+      // Absent on desktop and on iOS Safari; there is no fallback worth having.
+      navigator.vibrate?.(ms);
+    }
 
     let accumulator = 0;
     let last = performance.now();
@@ -114,6 +132,7 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
     }
 
     function onPointerDown(e: PointerEvent) {
+      audio ??= createAudioEngine();
       const hit = scene.screenToPitch(e.clientX, e.clientY);
       if (!hit) return;
       const body = pickBody(world, hit.x, hit.y, candidates);
@@ -142,8 +161,8 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
     function onPointerUp(e: PointerEvent) {
       if (!drag.active) return;
       const aim = dragToAim(drag.curX - drag.startX, drag.curY - drag.startY);
-      if (aim.valid) {
-        match.flick(quantizeFlick(drag.body, aim.aimX, aim.aimY, aim.power, 0));
+      if (aim.valid && match.flick(quantizeFlick(drag.body, aim.aimX, aim.aimY, aim.power, 0))) {
+        buzz(Math.round(4 + aim.power * 10));
       }
       drag.active = false;
       drag.body = -1;
@@ -166,12 +185,20 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
       let steps = 0;
       while (accumulator >= C.DT && steps < 8) {
         match.step();
+        // Drained straight after each step: the event buffer is cleared at
+        // the start of the next one, so a per-frame drain would miss every
+        // contact but the last.
+        scene.observeEvents(world.events, world);
+        if (audio) playSimEvents(audio, world.events);
+        for (let k = 0; k < world.events.count; k++) {
+          if (world.events.at(k).kind === SimEventKind.BallEnteredGoal) buzz(30);
+        }
         accumulator -= C.DT;
         steps++;
       }
       if (steps >= 8) accumulator = 0;
 
-      scene.sync(world, accumulator / C.DT);
+      scene.sync(world, accumulator / C.DT, dt);
       scene.render();
 
       if (now >= hudDue) {
@@ -198,6 +225,7 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
+      audio?.dispose();
       scene.dispose();
     };
   }, []);
