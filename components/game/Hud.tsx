@@ -1,5 +1,6 @@
 "use client";
 
+import type { DifficultyName } from "@/lib/ai/controller";
 import { Phase } from "@/lib/rules/types";
 
 export interface HudState {
@@ -25,7 +26,26 @@ const PHASE_LABEL: Record<number, string> = {
   [Phase.FullTime]: "full time",
 };
 
-export function Hud({ state, onSkipBlockFlick }: { state: HudState; onSkipBlockFlick: () => void }) {
+export interface HudProps {
+  state: HudState;
+  onSkipBlockFlick: () => void;
+  /** Team the computer plays, or -1 for hot-seat. */
+  aiTeam: number;
+  difficulty: DifficultyName;
+  onAiTeamChange: (team: number) => void;
+  onDifficultyChange: (difficulty: DifficultyName) => void;
+}
+
+const DIFFICULTY_NAMES: DifficultyName[] = ["easy", "normal", "hard"];
+
+export function Hud({
+  state,
+  onSkipBlockFlick,
+  aiTeam,
+  difficulty,
+  onAiTeamChange,
+  onDifficultyChange,
+}: HudProps) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col gap-2 p-4">
       <div className="flex flex-wrap items-center gap-3 text-neutral-100">
@@ -68,6 +88,30 @@ export function Hud({ state, onSkipBlockFlick }: { state: HudState; onSkipBlockF
             Skip block-flick
           </button>
         )}
+      </div>
+
+      <div className="pointer-events-auto flex flex-wrap items-center gap-2 font-mono text-xs">
+        <button
+          onClick={() => onAiTeamChange(aiTeam >= 0 ? -1 : 1)}
+          className="rounded-lg bg-black/50 px-3 py-1.5 text-neutral-200 backdrop-blur hover:bg-black/70"
+        >
+          {aiTeam >= 0 ? "vs computer" : "hot-seat"}
+        </button>
+
+        {aiTeam >= 0 &&
+          DIFFICULTY_NAMES.map((name) => (
+            <button
+              key={name}
+              onClick={() => onDifficultyChange(name)}
+              className={`rounded-lg px-2.5 py-1.5 backdrop-blur ${
+                difficulty === name
+                  ? "bg-neutral-200 text-neutral-900"
+                  : "bg-black/50 text-neutral-400 hover:bg-black/70"
+              }`}
+            >
+              {name}
+            </button>
+          ))}
       </div>
 
       <div className="font-mono text-[11px] text-neutral-500">

@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useRef, useState } from "react";
 import { DT } from "@/lib/sim/constants";
 import { Phase, type MatchState } from "@/lib/rules/types";
+import type { DifficultyName } from "@/lib/ai/controller";
 import { Hud, type HudState } from "./Hud";
 
 /**
@@ -40,6 +41,11 @@ export function GameShell() {
   });
   const skipRef = useRef<(() => void) | null>(null);
 
+  // -1 is hot-seat. The computer plays red by default, so the human takes
+  // the first flick.
+  const [aiTeam, setAiTeam] = useState(1);
+  const [difficulty, setDifficulty] = useState<DifficultyName>("normal");
+
   // The canvas calls this a few times a second, never per frame: React stays
   // entirely out of the render loop.
   const onState = useCallback((s: Readonly<MatchState>, fps: number, drawCalls: number) => {
@@ -62,8 +68,15 @@ export function GameShell() {
 
   return (
     <div className="relative h-dvh w-dvw overflow-hidden bg-neutral-900">
-      <GameCanvas onState={onState} onReady={onReady} />
-      <Hud state={hud} onSkipBlockFlick={() => skipRef.current?.()} />
+      <GameCanvas onState={onState} onReady={onReady} aiTeam={aiTeam} difficulty={difficulty} />
+      <Hud
+        state={hud}
+        onSkipBlockFlick={() => skipRef.current?.()}
+        aiTeam={aiTeam}
+        difficulty={difficulty}
+        onAiTeamChange={setAiTeam}
+        onDifficultyChange={setDifficulty}
+      />
       <p className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-center text-xs text-neutral-500">
         Press a figure, drag away from where you want it to go, release.
       </p>

@@ -89,6 +89,15 @@ export class Match {
     }
   }
 
+  /**
+   * Clear the settle counter. Called when state is restored from a snapshot,
+   * since the counter belongs to the resolve that was in flight, not to the
+   * state being loaded.
+   */
+  resetResolveCounter(): void {
+    this.resolveSteps = 0;
+  }
+
   /** Begin the second half, with the flick-off going to the other team. */
   beginNextHalf(): void {
     const m = this.state;
