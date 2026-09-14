@@ -9,6 +9,9 @@ import type { World } from "@/lib/sim/world";
 import { createBallGeometry, createFigureGeometry, createGoalGeometry, createNetGeometry } from "./geom";
 import { createBlobTexture, createEnvironment, createPitchTextures } from "./tex";
 import { TiltShiftShader } from "./passes/tiltShift";
+import { Shake, Trail, Wobble } from "./fx";
+import type { SimEventBuffer } from "@/lib/sim/events";
+import { SimEventKind } from "@/lib/sim/types";
 
 /**
  * The 3D presentation layer.
@@ -29,7 +32,13 @@ const KEEPER_COLOURS = [0x7fd1ff, 0xffc98a];
 const MAX_AIM_POINTS = 128;
 
 export interface Scene3D {
-  sync(world: World, alpha: number): void;
+  sync(world: World, alpha: number, dt: number): void;
+  /**
+   * Drain one step's simulation events into the visual effects. Must be
+   * called straight after each Match.step(), because the event buffer is
+   * cleared at the start of the next one.
+   */
+  observeEvents(events: SimEventBuffer, world: World): void;
   render(): void;
   resize(width: number, height: number): void;
   /** Map a pointer position to pitch coordinates, or null if it misses. */
@@ -44,7 +53,13 @@ export interface Scene3D {
   dispose(): void;
 }
 
-export function createScene(canvas: HTMLCanvasElement): Scene3D {
+export interface SceneOptions {
+  /** Suppresses camera shake. Haptics are gated by the caller separately. */
+  reducedMotion?: boolean;
+}
+
+export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {}): Scene3D {
+  const reducedMotion = options.reducedMotion === true;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -210,7 +225,6 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
 
   // Scratch objects, allocated once. Nothing in sync() may allocate.
   const mat4 = new THREE.Matrix4();
-  const quat = new THREE.Quaternion();
   const scaleOne = new THREE.Vector3(1, 1, 1);
   const pos = new THREE.Vector3();
   const colour = new THREE.Color();
@@ -225,6 +239,14 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
   const flatAxis = new THREE.Vector3(1, 0, 0);
   const flatQuat = new THREE.Quaternion();
   const focusProbe = new THREE.Vector3();
+  const wobbleQuat = new THREE.Quaternion();
+
+  const wobble = new Wobble();
+  const shake = new Shake();
+  const trail = new Trail();
+  scene.add(trail.line);
+
+  const baseCamPos = camera.position.clone();
   let lastBallX = 0;
   let lastBallZ = 0;
   let selected = -1;
@@ -233,7 +255,10 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
     return a + (b - a) * t;
   }
 
-  function sync(world: World, alpha: number): void {
+  function sync(world: World, alpha: number, dt: number): void {
+    wobble.update(dt);
+    shake.update(dt);
+
     let figureCount = 0;
     let shadowCount = 0;
 
@@ -259,10 +284,17 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
           ballSpin.premultiply(deltaSpin);
           ball.quaternion.copy(ballSpin);
         }
+        trail.push(
+          x,
+          C.BALL_RADIUS + z,
+          y,
+          Math.hypot(world.vx[BALL], world.vy[BALL]),
+        );
         lastBallX = x;
         lastBallZ = y;
       } else {
-        mat4.compose(pos.set(x, 0, y), quat.identity(), scaleOne);
+        wobble.applyTo(i, wobbleQuat);
+        mat4.compose(pos.set(x, 0, y), wobbleQuat, scaleOne);
         figures.setMatrixAt(figureCount, mat4);
         const team = world.team[i] === TEAM_A ? 0 : 1;
         colour.setHex(
@@ -296,6 +328,14 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
       selectRing.position.z = lerp(world.prevY[selected], world.py[selected], alpha);
     }
 
+    // Shake is applied as a camera offset rather than a scene transform, so
+    // it never disturbs picking, which unprojects through the same camera.
+    camera.position.set(
+      baseCamPos.x + shake.offsetX(),
+      baseCamPos.y + shake.offsetY(),
+      baseCamPos.z,
+    );
+
     // Keep the sharp band on the ball, so focus follows the action.
     focusProbe.copy(ball.position).project(camera);
     tilt.uniforms.uFocus.value = THREE.MathUtils.clamp(focusProbe.y * 0.5 + 0.5, 0.15, 0.85);
@@ -303,6 +343,37 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
 
   return {
     sync,
+    observeEvents(events: SimEventBuffer, world: World) {
+      for (let i = 0; i < events.count; i++) {
+        const e = events.at(i);
+        switch (e.kind) {
+          case SimEventKind.FigureHitBall:
+          case SimEventKind.KeeperHitBall:
+          case SimEventKind.FigureHitFigure: {
+            // Rock the struck bodies away from where the contact happened.
+            // The event carries the contact point, so the direction is that
+            // point relative to the body's own centre.
+            const dx = e.x - world.px[e.a];
+            const dz = e.y - world.py[e.a];
+            const len = Math.hypot(dx, dz) || 1;
+            wobble.kick(e.a, e.impulse, dx / len, dz / len);
+            if (e.b >= 0 && e.kind === SimEventKind.FigureHitFigure) {
+              wobble.kick(e.b, e.impulse, -dx / len, -dz / len);
+            }
+            if (!reducedMotion) shake.add(e.impulse * 0.35);
+            break;
+          }
+          case SimEventKind.BallHitPost:
+            if (!reducedMotion) shake.add(0.004);
+            break;
+          case SimEventKind.BallEnteredGoal:
+            if (!reducedMotion) shake.add(0.006);
+            break;
+          default:
+            break;
+        }
+      }
+    },
     render() {
       renderer.info.reset();
       composer.render();
@@ -310,7 +381,8 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
     resize(width: number, height: number) {
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      frameCamera(camera.aspect);
+        frameCamera(camera.aspect);
+      baseCamPos.copy(camera.position);
       renderer.setSize(width, height, false);
       composer.setSize(width, height);
       tilt.uniforms.uResolution.value.set(width, height);
@@ -367,6 +439,7 @@ export function createScene(canvas: HTMLCanvasElement): Scene3D {
       // Strict Mode double-invokes effects in dev, so an incomplete teardown
       // here means two live WebGL contexts and a leaked first one.
       composer.dispose();
+      trail.dispose();
       pitchTex.dispose();
       blobTex.dispose();
       env.dispose();
