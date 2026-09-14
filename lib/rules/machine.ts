@@ -1,5 +1,5 @@
 import { applyFlick, type FlickCommand } from "@/lib/sim/input";
-import { FLAG_ACTIVE, META_A_STATIONARY, SimEventKind } from "@/lib/sim/types";
+import { BodyKind, FLAG_ACTIVE, META_A_STATIONARY, SimEventKind } from "@/lib/sim/types";
 import type { World } from "@/lib/sim/world";
 import { ballFullyInShootingArea } from "./geometry";
 import { applyRestart } from "./restarts";
@@ -65,6 +65,13 @@ export function canFlick(
 ): boolean {
   if (m.phase !== Phase.AwaitAttackFlick && m.phase !== Phase.BlockFlickOffered) return false;
   if ((w.flags[body] & FLAG_ACTIVE) === 0) return false;
+
+  // The goalkeeper is not a flickable figure. FISTF 8.1.1 puts it on a rod
+  // held from behind the goal, and 8.2.1 forbids any part of it passing the
+  // goal-area line — so sending it upfield is not a bad move, it is an
+  // illegal one. Rod manipulation (Rule 8) is not implemented yet, so for now
+  // the keeper simply stands in goal.
+  if (w.kind[body] === BodyKind.Keeper) return false;
 
   const wantTeam = m.phase === Phase.BlockFlickOffered ? 1 - m.attackerTeam : m.attackerTeam;
   if (w.team[body] !== wantTeam) return false;

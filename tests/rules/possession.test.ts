@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Match } from "@/lib/match/Match";
 import { Phase } from "@/lib/rules/types";
-import { BALL, KEEPER_B, TEAM_A_FIRST, TEAM_B_FIRST } from "@/lib/sim/types";
+import { BALL, KEEPER_A, KEEPER_B, TEAM_A_FIRST, TEAM_B_FIRST } from "@/lib/sim/types";
 import { ballInFrontOf, cfg, clearPitch, flickAt, place, runUntilIdle } from "./helpers";
 
 const A1 = TEAM_A_FIRST;
@@ -144,5 +144,18 @@ describe("block-flicks (FISTF 6.2)", () => {
     match.skipBlockFlick();
     expect(match.state.phase).toBe(Phase.AwaitAttackFlick);
     expect(match.state.attackerTeam).toBe(0);
+  });
+});
+
+describe("goalkeeping (FISTF 8)", () => {
+  it("refuses to flick a goalkeeper (8.1.1, 8.2.1)", () => {
+    // The keeper is held on a rod behind the goal and may not pass the
+    // goal-area line, so it is not a flickable figure at all. Without this,
+    // both players — and the AI in particular — will happily fling their
+    // keeper upfield, which is illegal rather than merely unwise.
+    const match = new Match(cfg({ blockFlickEnabled: false }));
+    expect(match.canFlick(KEEPER_A)).toBe(false);
+    expect(match.canFlick(KEEPER_B)).toBe(false);
+    expect(match.flick(flickAt(KEEPER_A, 1, 0, 0.5))).toBe(false);
   });
 });

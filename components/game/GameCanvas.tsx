@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import * as C from "@/lib/sim/constants";
 import { Match } from "@/lib/match/Match";
 import { FISTF } from "@/lib/rules/presets";
-import type { MatchState } from "@/lib/rules/types";
+import { Phase, type MatchState } from "@/lib/rules/types";
 import { applyFlick, quantizeFlick } from "@/lib/sim/input";
 import { step } from "@/lib/sim/step";
 import { BALL, SimEventKind } from "@/lib/sim/types";
@@ -12,6 +12,8 @@ import { copyWorld, createWorld, isSettled } from "@/lib/sim/world";
 import { dragToAim, flickableBodies, pickBody } from "@/lib/input/flick";
 import { createScene, type Scene3D } from "@/lib/render/scene";
 import { createAudioEngine, type AudioEngine } from "@/lib/audio/engine";
+import { AiController, type DifficultyName } from "@/lib/ai/controller";
+import { DIFFICULTIES } from "@/lib/ai/search";
 import { playSimEvents } from "@/lib/audio/director";
 
 /**
@@ -30,12 +32,19 @@ export interface GameCanvasProps {
   onState: (state: Readonly<MatchState>, fps: number, drawCalls: number) => void;
   /** Receives a function that declines the owed block-flick. */
   onReady: (skipBlockFlick: () => void) => void;
+  /** Which team the computer plays, or -1 for hot-seat. */
+  aiTeam: number;
+  difficulty: DifficultyName;
 }
 
-export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
+export default function GameCanvas({ onState, onReady, aiTeam, difficulty }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const onStateRef = useRef(onState);
   const onReadyRef = useRef(onReady);
+  // Settings are read through refs so changing them never tears down and
+  // rebuilds the WebGL context and the match in progress.
+  const aiTeamRef = useRef(aiTeam);
+  const difficultyRef = useRef(difficulty);
 
   // Kept in a ref and synced in an effect rather than assigned during render:
   // the render loop must not re-create itself just because a callback
@@ -43,7 +52,9 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
   useEffect(() => {
     onStateRef.current = onState;
     onReadyRef.current = onReady;
-  }, [onState, onReady]);
+    aiTeamRef.current = aiTeam;
+    difficultyRef.current = difficulty;
+  }, [onState, onReady, aiTeam, difficulty]);
 
   useEffect(() => {
     const canvasOrNull = canvasRef.current;
@@ -78,6 +89,10 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
     // Browsers refuse to start an AudioContext outside a user gesture, so it
     // is created on the first press rather than at mount.
     let audio: AudioEngine | null = null;
+    const ai = new AiController();
+    // A short pause before the computer moves: an instant reply reads as a
+    // machine twitching rather than an opponent taking a turn.
+    let aiReadyAt = 0;
 
     function buzz(ms: number): void {
       if (reduceMotion) return;
@@ -137,6 +152,8 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
       if (!hit) return;
       const body = pickBody(world, hit.x, hit.y, candidates);
       if (body < 0 || !match.canFlick(body)) return;
+      // Hands off the computer's figures.
+      if (aiTeamRef.current >= 0 && world.team[body] === aiTeamRef.current) return;
 
       canvas.setPointerCapture(e.pointerId);
       drag.active = true;
@@ -173,6 +190,49 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
       e.preventDefault();
     }
 
+    /**
+     * Hand the turn to the computer when it is its move.
+     *
+     * Guarded on the phase rather than driven by it: the search is
+     * asynchronous, so by the time a result arrives the match may already
+     * have moved on, and applying a stale move would be a rules violation.
+     */
+    function maybeMoveAi(now: number) {
+      const team = aiTeamRef.current;
+      if (team < 0 || ai.thinking || drag.active) return;
+
+      const phase = match.state.phase;
+      const toPlay =
+        phase === Phase.AwaitAttackFlick
+          ? match.state.attackerTeam
+          : phase === Phase.BlockFlickOffered
+            ? 1 - match.state.attackerTeam
+            : -1;
+      if (toPlay !== team) {
+        aiReadyAt = 0;
+        return;
+      }
+
+      if (aiReadyAt === 0) {
+        aiReadyAt = now + 350;
+        return;
+      }
+      if (now < aiReadyAt) return;
+      aiReadyAt = 0;
+
+      const phaseAtRequest = phase;
+      ai.difficulty = DIFFICULTIES[difficultyRef.current];
+      ai.request(match, team, (cmd) => {
+        if (match.state.phase !== phaseAtRequest) return;
+        if (!cmd || !match.flick(cmd)) {
+          // No legal move found, or the position changed underneath us. A
+          // declined block-flick is legal (6.2.3); otherwise leave the turn
+          // alone rather than forcing something illegal.
+          if (phaseAtRequest === Phase.BlockFlickOffered) match.skipBlockFlick();
+        }
+      });
+    }
+
     function frame(now: number) {
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
@@ -197,6 +257,8 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
         steps++;
       }
       if (steps >= 8) accumulator = 0;
+
+      maybeMoveAi(now);
 
       scene.sync(world, accumulator / C.DT, dt);
       scene.render();
@@ -226,6 +288,7 @@ export default function GameCanvas({ onState, onReady }: GameCanvasProps) {
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
       audio?.dispose();
+      ai.dispose();
       scene.dispose();
     };
   }, []);
