@@ -8,12 +8,14 @@ import { BALL, BODY_COUNT, BodyKind, FLAG_ACTIVE, FLAG_OUT_OF_PLAY, TEAM_A } fro
 import type { World } from "@/lib/sim/world";
 import {
   createBallGeometry,
-  createFigureGeometry,
+  createFigureBodyGeometry,
+  createFigureHeadGeometry,
   createGoalGeometry,
   createNetGeometry,
   NET_DEPTH,
 } from "./geom";
-import { createBlobTexture, createEnvironment, createPitchTextures } from "./tex";
+import { createBallTexture, createBlobTexture, createEnvironment, createPitchTextures } from "./tex";
+import { createStadium } from "./stadium";
 import { TiltShiftShader } from "./passes/tiltShift";
 import { Shake, Trail, Wobble } from "./fx";
 import type { SimEventBuffer } from "@/lib/sim/events";
@@ -69,7 +71,7 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  renderer.toneMappingExposure = 1.42;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // EffectComposer issues several renders per frame and each one resets the
   // counter, so the default reading reports only the final pass.
@@ -86,25 +88,57 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
   const camera = new THREE.PerspectiveCamera(V_FOV, 1, 0.02, 8);
 
   /**
-   * Pull the camera back far enough that the whole pitch fits, whatever the
-   * viewport shape. Hard-coding a position frames correctly on one screen and
-   * crops the goals on every other one — phones especially.
+   * Points the shot must hold: the pitch corners, the back of each net, and
+   * the top of each goal frame.
+   */
+  const FIT_POINTS: THREE.Vector3[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      FIT_POINTS.push(new THREE.Vector3(sx * (C.HALF_LENGTH + NET_DEPTH), 0, sz * C.HALF_WIDTH));
+      FIT_POINTS.push(new THREE.Vector3(sx * C.HALF_LENGTH, C.GOAL_HEIGHT, (sz * C.GOAL_WIDTH) / 2));
+    }
+  }
+
+  /**
+   * How much of the frame the pitch fills. Short of 1 on purpose: the stand
+   * behind the goals is part of the picture, and a pitch pressed against the
+   * edges of the screen reads as a crop rather than as a shot.
+   */
+  const FILL_X = 0.97;
+  const FILL_Y = 0.9;
+  const fitProbe = new THREE.Vector3();
+
+  /**
+   * Pull the camera back until everything fits, whatever the viewport shape.
+   *
+   * Solved by projecting the points and measuring, rather than by a closed
+   * form. The closed form has to model the tilt's foreshortening, and every
+   * version of it I wrote was right at one aspect ratio and cropped the pitch
+   * at another — perspective makes the near touchline cover far more of the
+   * screen than the far one, which a symmetric estimate cannot express. This
+   * measures what the camera will actually show, so it cannot disagree with it.
    */
   function frameCamera(aspect: number): void {
-    const vFov = THREE.MathUtils.degToRad(V_FOV);
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
-    // Margins leave a little felt visible outside the touchlines. The pitch is
-    // tilted away from the camera, so its across-pitch extent is foreshortened
-    // on screen — ignoring that pulls the camera much further back than the
-    // shot actually needs and leaves the pitch marooned in empty space.
-    // The goals stand *behind* the goal-lines, so the shot has to hold the
-    // pitch plus a net's depth at each end. Framing to the pitch alone cropped
-    // both goals off the sides of the screen.
-    const needH = (C.HALF_LENGTH + NET_DEPTH) * 1.04;
-    const needV = (C.PITCH_WIDTH / 2) * Math.cos(TILT) * 1.35;
-    const dist = Math.max(needH / Math.tan(hFov / 2), needV / Math.tan(vFov / 2));
-    camera.position.set(0, dist * Math.sin(TILT), dist * Math.cos(TILT));
-    camera.lookAt(0, 0, 0);
+    camera.aspect = aspect;
+    let dist = 1.6;
+
+    for (let i = 0; i < 24; i++) {
+      camera.position.set(0, dist * Math.sin(TILT), dist * Math.cos(TILT));
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+      camera.updateProjectionMatrix();
+
+      // Measured per axis: the pitch is a long rectangle, so on a wide screen
+      // the width binds and on a tall one the depth does. One shared limit
+      // means whichever axis is not binding is left half empty.
+      let worst = 0;
+      for (const p of FIT_POINTS) {
+        fitProbe.copy(p).project(camera);
+        worst = Math.max(worst, Math.abs(fitProbe.x) / FILL_X, Math.abs(fitProbe.y) / FILL_Y);
+      }
+      if (worst <= 0 || Math.abs(worst - 1) < 0.004) break;
+      dist *= worst;
+    }
   }
   frameCamera(1.5);
 
@@ -112,15 +146,33 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
   scene.environment = env;
 
   // --- lighting: one warm key, plus a soft fill ---
-  const key = new THREE.DirectionalLight(0xfff0dc, 2.1);
+  const key = new THREE.DirectionalLight(0xfff0dc, 2.4);
   key.position.set(-0.6, 1.1, 0.5);
   scene.add(key);
-  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x20241c, 0.55));
+  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x20241c, 0.7));
+
+  // Floodlights: four cool sources above the corners of the bowl. A stadium
+  // is lit from its corners, and the give-away that ours was not is that the
+  // crowd sat in a single flat wash from the hemisphere light.
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const flood = new THREE.PointLight(0xe8f0ff, 0.5, 4, 1.4);
+      flood.position.set(sx * 1.1, 0.7, sz * 0.95);
+      scene.add(flood);
+    }
+  }
+
+  // --- the stadium the table stands in ---
+  const stadium = createStadium();
+  scene.add(stadium.group);
 
   // --- table the pitch sits on ---
   const table = new THREE.Mesh(
     new THREE.PlaneGeometry(4, 4),
-    new THREE.MeshStandardMaterial({ color: 0x241c16, roughness: 0.85 }),
+    // The surround inside the hoardings. Once the pitch stood in a stadium
+    // rather than on a table in a room, a warm wooden brown read as a gap in
+    // the picture; a dark neutral lets the felt be the only green.
+    new THREE.MeshStandardMaterial({ color: 0x1a2129, roughness: 0.95 }),
   );
   table.rotation.x = -Math.PI / 2;
   table.position.y = -0.004;
@@ -159,8 +211,8 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
     scene.add(g);
   }
 
-  // --- figures: one instanced mesh for all 22 ---
-  const figureGeom = createFigureGeometry();
+  // --- figures: two instanced meshes for all 22, body and head ---
+  const figureGeom = createFigureBodyGeometry();
   const figureMat = new THREE.MeshStandardMaterial({
     roughness: 0.22,
     metalness: 0,
@@ -171,10 +223,26 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
   figures.count = 0;
   scene.add(figures);
 
+  // Heads share the bodies' transforms but not their colour, which is the
+  // whole point of the split: a figure painted one colour top to bottom is a
+  // pawn, and a painted head is a player.
+  const headGeom = createFigureHeadGeometry();
+  const headMat = new THREE.MeshStandardMaterial({
+    color: 0xe8b88c,
+    roughness: 0.4,
+    metalness: 0,
+    envMapIntensity: 0.7,
+  });
+  const heads = new THREE.InstancedMesh(headGeom, headMat, BODY_COUNT);
+  heads.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  heads.count = 0;
+  scene.add(heads);
+
   // --- ball ---
+  const ballTex = createBallTexture();
   const ball = new THREE.Mesh(
     createBallGeometry(),
-    new THREE.MeshStandardMaterial({ color: 0xfdfdfd, roughness: 0.3, envMapIntensity: 1.1 }),
+    new THREE.MeshStandardMaterial({ map: ballTex, roughness: 0.3, envMapIntensity: 1.1 }),
   );
   scene.add(ball);
 
@@ -305,6 +373,7 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
         wobble.applyTo(i, wobbleQuat);
         mat4.compose(pos.set(x, 0, y), wobbleQuat, scaleOne);
         figures.setMatrixAt(figureCount, mat4);
+        heads.setMatrixAt(figureCount, mat4);
         const team = world.team[i] === TEAM_A ? 0 : 1;
         colour.setHex(
           world.kind[i] === BodyKind.Keeper ? KEEPER_COLOURS[team] : TEAM_COLOURS[team],
@@ -329,6 +398,8 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
     figures.count = figureCount;
     figures.instanceMatrix.needsUpdate = true;
     if (figures.instanceColor) figures.instanceColor.needsUpdate = true;
+    heads.count = figureCount;
+    heads.instanceMatrix.needsUpdate = true;
     shadows.count = shadowCount;
     shadows.instanceMatrix.needsUpdate = true;
 
@@ -451,6 +522,8 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
       trail.dispose();
       pitchTex.dispose();
       blobTex.dispose();
+      ballTex.dispose();
+      stadium.dispose();
       env.dispose();
       scene.traverse((o) => {
         const m = o as THREE.Mesh;

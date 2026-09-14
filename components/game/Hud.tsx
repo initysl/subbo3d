@@ -15,17 +15,6 @@ export interface HudState {
   drawCalls: number;
 }
 
-const PHASE_LABEL: Record<number, string> = {
-  [Phase.FlickOff]: "flick-off",
-  [Phase.AwaitAttackFlick]: "your flick",
-  [Phase.Resolving]: "…",
-  [Phase.BlockFlickOffered]: "BLOCK-FLICK",
-  [Phase.Restart]: "restart",
-  [Phase.GoalScored]: "GOAL!",
-  [Phase.HalfTime]: "half time",
-  [Phase.FullTime]: "full time",
-};
-
 export interface HudProps {
   state: HudState;
   onSkipBlockFlick: () => void;
@@ -38,6 +27,53 @@ export interface HudProps {
 
 const DIFFICULTY_NAMES: DifficultyName[] = ["easy", "normal", "hard"];
 
+/** Must match TEAM_COLOURS in lib/render/scene.ts. */
+const TEAM_HEX = ["#2f7fd4", "#d4442f"];
+const TEAM_NAME = ["BLUE", "RED"];
+
+/**
+ * A club crest: a coloured disc with the team's initial.
+ *
+ * Drawn in CSS rather than fetched. It is two divs, it scales cleanly on any
+ * display, and it keeps the promise that this project ships no binary art.
+ */
+function Crest({ team }: { team: number }) {
+  return (
+    <span
+      className="grid h-9 w-9 place-items-center rounded-full border-2 border-white/25 text-sm font-black text-white/95 shadow-inner"
+      style={{ background: `radial-gradient(circle at 35% 30%, ${TEAM_HEX[team]}, #0009)` }}
+    >
+      {TEAM_NAME[team][0]}
+    </span>
+  );
+}
+
+/**
+ * What the game is waiting for, said in one line.
+ *
+ * The phase is the single thing a player must know at a glance — whose turn
+ * it is, and whether something unusual (a block-flick, a goal) is on offer.
+ */
+function statusFor(state: HudState): { label: string; tone: string } | null {
+  switch (state.phase) {
+    case Phase.BlockFlickOffered:
+      return { label: "BLOCK-FLICK", tone: "bg-amber-400 text-black" };
+    case Phase.GoalScored:
+      return { label: "GOAL!", tone: "bg-emerald-400 text-black" };
+    case Phase.HalfTime:
+      return { label: "HALF TIME", tone: "bg-white text-black" };
+    case Phase.FullTime:
+      return { label: "FULL TIME", tone: "bg-white text-black" };
+    case Phase.Resolving:
+      return null;
+    default:
+      return {
+        label: `${TEAM_NAME[state.attacker]} TO FLICK`,
+        tone: "bg-black/70 text-white",
+      };
+  }
+}
+
 export function Hud({
   state,
   onSkipBlockFlick,
@@ -46,77 +82,80 @@ export function Hud({
   onAiTeamChange,
   onDifficultyChange,
 }: HudProps) {
+  const status = statusFor(state);
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col gap-2 p-4">
-      <div className="flex flex-wrap items-center gap-3 text-neutral-100">
-        <div className="rounded-lg bg-black/50 px-3 py-1.5 font-mono text-2xl tabular-nums backdrop-blur">
-          <span className="text-sky-400">{state.score0}</span>
-          <span className="mx-2 text-neutral-500">–</span>
-          <span className="text-red-400">{state.score1}</span>
+    <>
+      {/* Scoreboard, centred over the halfway line like a broadcast bug. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col items-center gap-1.5 p-3">
+        <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/65 px-3 py-1.5 shadow-lg backdrop-blur">
+          <Crest team={0} />
+          <div className="flex items-baseline gap-2 font-mono text-3xl font-bold tabular-nums text-white">
+            <span>{state.score0}</span>
+            <span className="text-lg text-white/40">:</span>
+            <span>{state.score1}</span>
+          </div>
+          <Crest team={1} />
+          <div className="ml-1 border-l border-white/15 pl-3 text-right font-mono text-sm leading-tight text-white/80">
+            <div className="tabular-nums">{state.clock}</div>
+            <div className="text-[10px] tracking-widest text-white/45">H{state.half}</div>
+          </div>
         </div>
 
-        <div className="rounded-lg bg-black/50 px-3 py-1.5 font-mono text-sm backdrop-blur">
-          {state.clock} · H{state.half}
-        </div>
-
-        <div
-          className={`rounded-lg px-3 py-1.5 font-mono text-sm backdrop-blur ${
-            state.phase === Phase.BlockFlickOffered
-              ? "bg-amber-500 text-black"
-              : state.phase === Phase.GoalScored
-                ? "bg-emerald-500 text-black"
-                : "bg-black/50"
-          }`}
-        >
-          {PHASE_LABEL[state.phase] ?? "?"}
-        </div>
-
-        <div className="rounded-lg bg-black/50 px-3 py-1.5 font-mono text-sm backdrop-blur">
-          <span className="text-neutral-400">to play </span>
-          <span className={state.attacker === 0 ? "text-sky-400" : "text-red-400"}>
-            {state.attacker === 0 ? "blue" : "red"}
-          </span>
-          <span className="ml-3 text-neutral-400">flicks </span>
-          <span>{state.flicksUsed}/3</span>
-        </div>
+        {status && (
+          <div
+            className={`flex items-center gap-2 rounded-full px-3 py-1 font-mono text-xs font-bold tracking-widest shadow ${status.tone}`}
+          >
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ background: TEAM_HEX[state.attacker] }}
+            />
+            {status.label}
+            {state.phase === Phase.AwaitAttackFlick && (
+              <span className="font-normal opacity-60">{state.flicksUsed}/3</span>
+            )}
+          </div>
+        )}
 
         {state.phase === Phase.BlockFlickOffered && (
           <button
             onClick={onSkipBlockFlick}
-            className="pointer-events-auto rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
+            className="pointer-events-auto rounded-full bg-amber-500 px-4 py-1.5 text-xs font-bold tracking-wide text-black shadow hover:bg-amber-400"
           >
-            Skip block-flick
+            SKIP BLOCK-FLICK
           </button>
         )}
       </div>
 
-      <div className="pointer-events-auto flex flex-wrap items-center gap-2 font-mono text-xs">
+      {/* Match settings, out of the way in the corner. */}
+      <div className="pointer-events-auto absolute left-3 top-3 flex flex-col gap-1.5 font-mono text-[11px]">
         <button
           onClick={() => onAiTeamChange(aiTeam >= 0 ? -1 : 1)}
-          className="rounded-lg bg-black/50 px-3 py-1.5 text-neutral-200 backdrop-blur hover:bg-black/70"
+          className="rounded-full border border-white/10 bg-black/60 px-3 py-1.5 text-white/80 backdrop-blur hover:bg-black/80"
         >
           {aiTeam >= 0 ? "vs computer" : "hot-seat"}
         </button>
 
-        {aiTeam >= 0 &&
-          DIFFICULTY_NAMES.map((name) => (
-            <button
-              key={name}
-              onClick={() => onDifficultyChange(name)}
-              className={`rounded-lg px-2.5 py-1.5 backdrop-blur ${
-                difficulty === name
-                  ? "bg-neutral-200 text-neutral-900"
-                  : "bg-black/50 text-neutral-400 hover:bg-black/70"
-              }`}
-            >
-              {name}
-            </button>
-          ))}
+        {aiTeam >= 0 && (
+          <div className="flex overflow-hidden rounded-full border border-white/10 bg-black/60 backdrop-blur">
+            {DIFFICULTY_NAMES.map((name) => (
+              <button
+                key={name}
+                onClick={() => onDifficultyChange(name)}
+                className={`px-2.5 py-1.5 ${
+                  difficulty === name ? "bg-white text-neutral-900" : "text-white/55 hover:text-white"
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="font-mono text-[11px] text-neutral-500">
+      <div className="pointer-events-none absolute bottom-2 left-3 font-mono text-[10px] text-white/30">
         {state.fps.toFixed(0)} fps · {state.drawCalls} draw calls
       </div>
-    </div>
+    </>
   );
 }

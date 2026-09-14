@@ -13,13 +13,23 @@ import * as C from "@/lib/sim/constants";
 const FIGURE_HEIGHT = 0.032;
 
 /**
- * A weighted base with a domed top, plus a simple torso.
+ * The figure, split into the parts that are painted differently.
  *
- * Merged into one geometry at init so all 22 figures can be drawn by a single
- * InstancedMesh. The origin sits on the felt, so the instance matrix is just
- * the body's position.
+ * Two geometries rather than one, drawn as two instanced meshes sharing the
+ * same transform: the body carries the team's colour, the head does not. A
+ * single merged figure had to be one colour throughout, which is why every
+ * player used to read as a coloured pawn rather than as a person. It costs
+ * one extra draw call for all twenty-two.
+ *
+ * The origin sits on the felt, so the instance matrix is just the body's
+ * position.
  */
-export function createFigureGeometry(): THREE.BufferGeometry {
+
+/** Where the neck sits, shared by both halves so they cannot drift apart. */
+const NECK_Y = FIGURE_HEIGHT - 0.0092;
+const HEAD_RADIUS = 0.0049;
+
+export function createFigureBodyGeometry(): THREE.BufferGeometry {
   const r = C.BASE_RADIUS;
   const h = C.BASE_HEIGHT;
 
@@ -37,20 +47,34 @@ export function createFigureGeometry(): THREE.BufferGeometry {
   // A real playing figure is a flat silhouette, not a cone: FISTF 4.1.2 puts
   // it at most 1.3 cm across and 0.6 cm thick. Flattening along z is what
   // makes it read as a person from the camera's angle rather than a skittle.
-  const bodyHeight = FIGURE_HEIGHT - h;
-  const body = new THREE.CapsuleGeometry(0.0048, bodyHeight * 0.62, 4, 12);
-  body.scale(1, 1, 0.55);
-  body.translate(0, h + bodyHeight * 0.5, 0);
+  const torsoHeight = NECK_Y - h;
+  const torso = new THREE.CapsuleGeometry(0.0052, torsoHeight * 0.72, 4, 12);
+  torso.scale(1, 1, 0.58);
+  torso.translate(0, h + torsoHeight * 0.52, 0);
 
-  const head = new THREE.SphereGeometry(0.0036, 12, 10);
-  head.scale(1, 1, 0.62);
-  head.translate(0, FIGURE_HEIGHT - 0.0032, 0);
-
-  const merged = mergeGeometries([base, body, head], false);
+  const merged = mergeGeometries([base, torso], false);
   base.dispose();
-  body.dispose();
+  torso.dispose();
+  if (!merged) throw new Error("failed to merge figure body geometry");
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/**
+ * Head and hair, drawn in skin rather than in the team's colour.
+ *
+ * Bigger than a head has any right to be — about a fifth of the figure's
+ * height. That is how a toy is sculpted, and at the size these render on
+ * screen an anatomical head simply disappears.
+ */
+export function createFigureHeadGeometry(): THREE.BufferGeometry {
+  const head = new THREE.SphereGeometry(HEAD_RADIUS, 12, 10);
+  head.scale(1, 1.04, 0.78);
+  head.translate(0, NECK_Y + HEAD_RADIUS * 0.82, 0);
+
+  const merged = mergeGeometries([head], false);
   head.dispose();
-  if (!merged) throw new Error("failed to merge figure geometry");
+  if (!merged) throw new Error("failed to merge figure head geometry");
   merged.computeVertexNormals();
   return merged;
 }

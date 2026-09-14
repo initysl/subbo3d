@@ -177,9 +177,9 @@ export interface PitchTextures {
 export function createPitchTextures(): PitchTextures {
   const albedo = makeCanvas(PITCH_TEX_WIDTH, PITCH_TEX_HEIGHT);
   const actx = albedo.getContext("2d", { willReadFrequently: true })!;
-  actx.fillStyle = "#2c5f38";
+  actx.fillStyle = "#38774a";
   actx.fillRect(0, 0, PITCH_TEX_WIDTH, PITCH_TEX_HEIGHT);
-  drawStripes(actx, 0.035);
+  drawStripes(actx, 0.05);
   drawFeltNoise(actx, PITCH_TEX_WIDTH, PITCH_TEX_HEIGHT);
   drawMarkings(actx);
 
@@ -209,6 +209,73 @@ export function createPitchTextures(): PitchTextures {
       roughnessMap.dispose();
     },
   };
+}
+
+/**
+ * The classic black-and-white ball, generated rather than unwrapped.
+ *
+ * A truncated icosahedron's twelve black pentagons sit exactly at the twelve
+ * vertices of an icosahedron, so the pattern needs no UV layout at all: for
+ * each texel, take the direction it points on the sphere and darken it if it
+ * lies within a pentagon's angular radius of one of those vertices. An
+ * equirectangular map and a plain sphere then do the rest.
+ */
+export function createBallTexture(): THREE.CanvasTexture {
+  const w = 512;
+  const h = 256;
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext("2d")!;
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+
+  // Icosahedron vertices: (0, ±1, ±φ) and its cyclic permutations.
+  const phi = (1 + Math.sqrt(5)) / 2;
+  const inv = 1 / Math.sqrt(1 + phi * phi);
+  const verts: number[] = [];
+  for (const a of [-1, 1]) {
+    for (const b of [-phi, phi]) {
+      verts.push(0, a * inv, b * inv);
+      verts.push(a * inv, b * inv, 0);
+      verts.push(b * inv, 0, a * inv);
+    }
+  }
+
+  /** Cosine of a pentagon's angular radius. */
+  const PATCH = 0.9375;
+
+  for (let y = 0; y < h; y++) {
+    const lat = ((y + 0.5) / h) * Math.PI;
+    const sy = Math.cos(lat);
+    const sr = Math.sin(lat);
+
+    for (let x = 0; x < w; x++) {
+      const lon = ((x + 0.5) / w) * Math.PI * 2;
+      const sx = sr * Math.cos(lon);
+      const sz = sr * Math.sin(lon);
+
+      let best = -1;
+      for (let v = 0; v < verts.length; v += 3) {
+        const dot = sx * verts[v] + sy * verts[v + 1] + sz * verts[v + 2];
+        if (dot > best) best = dot;
+      }
+
+      // A soft edge rather than a hard one: the ball is a few dozen pixels
+      // across, and an aliased pentagon edge sparkles as it rolls.
+      const t = Math.max(0, Math.min(1, (best - PATCH) / 0.012));
+      const shade = Math.round(250 - t * 216);
+      const i = (y * w + x) * 4;
+      d[i] = shade;
+      d[i + 1] = shade;
+      d[i + 2] = Math.round(shade * 0.99);
+      d[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
 }
 
 /**
